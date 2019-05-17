@@ -17,8 +17,10 @@
 package com.example.android.kotlincoroutines.main
 
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
-import com.example.android.kotlincoroutines.test.util.captureValues
-import kotlinx.coroutines.runBlocking
+import androidx.lifecycle.LiveData
+import com.google.common.truth.Truth
+import kotlinx.coroutines.Dispatchers
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -33,6 +35,10 @@ class MainViewModelTest {
      */
     @get:Rule
     val instantTaskExecutorRule = InstantTaskExecutorRule()
+    /**
+     * This dispatcher will let us progress time in the test.
+     */
+    var testDispatcher = TestCoroutineDispatcher()
 
     lateinit var subject: MainViewModel
 
@@ -41,17 +47,47 @@ class MainViewModelTest {
      */
     @Before
     fun setup() {
+        // set Dispatchers.Main, this allows our test to run
+        // off-device
+        Dispatchers.setMain(testDispatcher)
         subject = MainViewModel()
     }
 
+    @After
+    fun teardown() {
+        // reset main after the test is done
+        Dispatchers.resetMain()
+        // call this to ensure TestCoroutineDispater doesn't
+        // accidentally carry state to the next test
+        dispatcher.cleanupTestCoroutines()
+    }
+
+    // note the use of runBlockingTest instead of runBlocking
+    // this gives the test the ability to control time.
     @Test
-    fun whenMainViewModelClicked_showSnackbar() {
-        runBlocking {
-            subject.snackbar.captureValues {
-                subject.onMainViewClicked()
-                assertSendsValues(2_000, "Hello, from threads!")
-            }
+    fun whenMainViewModelClicked_showSnackbar() = testDispatcher.runBlockingTest {
+        subject.snackbar.observeForTesting {
+            subject.onMainViewClicked()
+            // progress time by one second
+            advanceTimeBy(1_000)
+            // value is available immediately without making the test wait
+            Truth.assertThat(subject.snackbar.value)
+                    .isEqualTo("Hello, from coroutines!")
         }
     }
+
+    // helper method to allow us to get the value from a LiveData
+    // LiveData won't publish a result until there is at least one observer
+    private fun <T> LiveData<T>.observeForTesting(
+            block: () -> Unit) {
+        val observer = Observer<T> { Unit }
+        try {
+            observeForever(observer)
+            block()
+        } finally {
+            removeObserver(observer)
+        }
+    }
+
 }
 
